@@ -1,0 +1,2005 @@
+######################## Bitmap Display Configuration ########################
+# - Unit width in pixels:       8
+# - Unit height in pixels:      8
+# - Display width in pixels:    256
+# - Display height in pixels:   256
+# - Base Address for Display:   0x10008000 ($gp)
+##############################################################################
+.eqv BALL_SIZE, 1
+.eqv BALL_COLOUR, 0xFFFFFF
+.eqv BRICK_WIDTH, 4 
+.eqv PADDLE_SIZE, 7
+.eqv PADDLE_COLOUR, 0xBA55D3
+.eqv WALL_WIDTH, 2
+
+.data
+##############################################################################
+# Immutable Data
+##############################################################################
+ADDR_DSPL:
+	.word 0x10008000 # DISPLAY ADDRESS
+ADDR_KBRD:
+	.word 0xffff0000
+MY_COLOURS:
+	.word 0xFFBF15 # Yellow    \0/
+	.word 0xF2541B # Orange    \4/
+	.word 0xC91853 # Magenta   \8/
+	.word 0x6A0487 # Purple    \12/
+	.word 0x301D7D # Indigo    \16/
+	.word 0x708090 # Grey      \20/
+	.word 0x000000 # Black     \24/
+	.word 0x647C90 # Blue-Grey \28/
+	.word 0x2F4F4F # Dark-Slate-Grey \32/
+
+DELAY:  .word 15000	#default delay/speed
+WALL:
+	.word WALL_WIDTH # WALL WIDTH
+BRICK:
+	# BRICK ATTRIBUTES
+	.word 0x10008388 # POSITION OF TOP LEFT BRICK
+	
+TIME_LIMIT:
+	.word 0x000000F8 # TIME LIMIT OF GAME 75sec = 124F8
+##############################################################################
+# Mutable Data
+##############################################################################
+BALL:
+# BALL ATTRIBUTE
+# POSITION: CAN OFFSET BY DOING 4X + 128Y
+	.word BALL_COLOUR # COLOUR		\0/
+	.word 0x10008EC0 # position            \4/
+	.word 0x00000001 # direction ball moving 1-4 inclusive. 1 = TR 2 = TL 3 = DR 4 = DL \8/
+
+PADDLE:
+# PADDLE ATTRIBUTES
+	.word PADDLE_SIZE # PADDLE SIZE
+	.word PADDLE_COLOUR # PADDLE COLOUR
+	.word 0x10008FB4 # LEFTMOST PIXEL OF PADDLE
+
+LIVES:
+	.word 0x00000003  # NUMBER OF LIVES: 3
+
+PADDLE2:
+	.word PADDLE_SIZE   # PADDLE SIZE
+	.word PADDLE_COLOUR # PADDLE COLOUR
+	.word 0x10008F34   # LEFTMOST PIXEL OF PADDLE
+
+##############################################################################
+# Code
+##############################################################################
+.text
+main:
+start_time:
+	lw $s3, TIME_LIMIT
+	li $v0, 30
+	syscall
+	move $s0 ,$a0
+j initialize_screen
+
+pre_game:
+
+	lw $t0, ADDR_KBRD               # $t0 = base address for keyboard
+	lw $a3, 0($t0)                  # Load first word from keyboard
+	beq $a3, 1, pre_keyboard_input      # branch if key is pressed
+	j pre_game
+	
+
+game_loop: # main game loop
+
+lw $t0, ADDR_KBRD               # $t0 = base address for keyboard
+lw $a3, 0($t0)                  # Load first word from keyboard
+beq $a3, 1, keyboard_input      # branch if key is pressed
+
+
+
+
+
+before_collision:               # label before collission check
+j check_collision               # check collision
+after_collision:                # label for after collision check
+j check_ball_position           # check if player lost
+after_ball_check:               # label for after checking player has not lost
+j check_time
+after_time_check:
+j check_win_condition
+
+j game_loop                     # loop back to game loop
+
+check_colour_sound:
+	la $t1, MY_COLOURS
+	lw $t2, 20($t1) # wall colour
+	lw $t1, 28($t1) # ceiling colour
+	la $t3, PADDLE
+	lw $t3, 4($t3)
+	# correction sound
+	lw $t4, -128($a0)
+	seq $t0, $t4, $t1
+	beq $t0, 1, ceiling_sound
+	bnez $t4, brick_sound
+	
+	lw $t4, 128($a0)
+	seq $t0, $t4, $t3
+	beq $t0, 1, paddle_sound
+	bnez $t4, brick_sound
+	
+	# projection sound (regular)
+	lw $t4, 0($a1)
+	seq $t0, $t4, $t1
+	beq $t0, 1, ceiling_sound
+	seq $t0, $t4, $t2
+	beq $t0, 1, wall_sound
+	seq $t0, $t4, $t3
+	beq $t0, 1, paddle_sound
+	bnez $t4, brick_sound
+	
+	lw $t4, 4($a0)
+	seq $t0, $t4, $t3
+	beq $t0, 1, paddle_sound
+	bnez $t4, brick_sound
+	
+	lw $t4, -4($a0)
+	seq $t0, $t4, $t3
+	beq $t0, 1, paddle_sound
+	bnez $t4, brick_sound
+	after_sound:
+	beq $t7, 1, after_colour_sound
+	beq $t7, 2, after_wall_bounce_sound
+	beq $t7, 3, after_brick_corner_sound
+	beq $t7, 4, after_iso_up_sound
+	beq $t7, 5, after_iso_down_sound
+	beq $t7, 6, after_correction_sound
+	beq $t7, 7, after_wall_brick_sound
+	beq $t7, 8, after_brick_collision_sound
+	
+w_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	
+# Ab
+li $v0, 33
+li $a0, 68
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# B
+li $v0, 33
+li $a0, 71
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Eb
+li $v0, 33
+li $a0, 75
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# E
+li $v0, 33
+li $a0, 76
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Ab
+li $v0, 33
+li $a0, 68
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Db
+li $v0, 33
+li $a0, 73
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# E
+li $v0, 33
+li $a0, 76
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Eb
+li $v0, 33
+li $a0, 75
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Ab
+li $v0, 33
+li $a0, 68
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# B
+li $v0, 33
+li $a0, 71
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Eb
+li $v0, 33
+li $a0, 75
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# E
+li $v0, 33
+li $a0, 76
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Ab
+li $v0, 33
+li $a0, 68
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Db
+li $v0, 33
+li $a0, 73
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# E
+li $v0, 33
+li $a0, 76
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Eb
+li $v0, 33
+li $a0, 75
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# E
+li $v0, 33
+li $a0, 76
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Eb
+li $v0, 33
+li $a0, 75
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# B
+li $v0, 33
+li $a0, 71
+li $a1, 500
+li $a2, 6
+li $a3, 127
+syscall
+
+# Ab
+li $v0, 33
+li $a0, 68
+li $a1, 500
+li $a2, 6
+li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_no_lives
+
+l_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	li $v0, 33
+	li $a0, 54
+	li $a1, 500
+	li $a2, 100
+	li $a3, 127
+	syscall
+	li $v0, 33
+	li $a0, 52
+	li $a1, 500
+	li $a2, 100
+	li $a3, 127
+	syscall
+	li $v0, 33
+	li $a0, 50
+	li $a1, 500
+	li $a2, 100
+	li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_no_lives
+	
+brick_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	li $v0, 33
+	li $a0, 65
+	li $a1, 200
+	li $a2, 15
+	li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_sound
+paddle_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	li $v0, 33
+	li $a0, 60
+	li $a1, 100
+	li $a2, 25
+	li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_sound
+wall_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	li $v0, 33
+	li $a0, 50
+	li $a1, 100
+	li $a2, 99
+	li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_sound
+
+ceiling_sound:
+	move $s6,$a0
+	move $s4, $a1
+	move $s5, $a2
+	li $v0, 33
+	li $a0, 50
+	li $a1, 150
+	li $a2, 127
+	li $a3, 127
+	syscall
+	move $a0, $s6
+	move $a1, $s4
+	move $a2, $s5
+	j after_sound
+
+
+
+check_win_condition:
+    li $a3, 0
+    li $t5, 0
+    li $t3, 158
+    la $t6, BRICK
+    lw $t6, 0($t6)
+    win_loop:
+    lw $t0, 0($t6)
+    la $t1, MY_COLOURS
+    lw $t1, 20($t1)
+    la $t4, BALL
+    lw $t4, 0($t4)
+    beq $t0, $t1, not_brick
+    beq $t0, $t4, not_brick
+    seq $t5, $t0, 0
+    beqz $t5, add_one
+    not_brick:
+    addi $t6, $t6, 4
+    addi $t3, $t3, -1
+    bnez $a3, game_loop
+    bnez $t3, win_loop
+    beq $a3, 0, win_screen
+    
+add_one:
+    addi $a3, $a3, 1
+    j not_brick
+
+win_screen:
+	li $t0 0xFFFFFF
+	la $t1, ADDR_DSPL
+	lw $t1, 0($t1)
+	
+
+	addi $t2, $t1, 20
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 20
+	sw $t0, 2176($t2)
+	
+	addi $t2, $t1, 24
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 24
+	sw $t0, 2432($t2)
+	
+	addi $t2, $t1, 28
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 28
+	sw $t0, 2688($t2)
+
+	addi $t2, $t1, 32
+	sw $t0, 2816($t2)
+	addi $t2, $t1, 32
+	sw $t0, 2944($t2)
+	
+	addi $t2, $t1, 36
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 36
+	sw $t0, 3200($t2)
+	
+	addi $t2, $t1, 40
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 40
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 44
+	sw $t0, 3584($t2)
+	
+	addi $t2, $t1, 48
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 52
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 52
+	sw $t0, 3200($t2)
+	
+	addi $t2, $t1, 56
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 56
+	sw $t0, 2944($t2)
+	
+	addi $t2, $t1, 60
+	sw $t0, 2816($t2)
+	
+	
+	# second half of w
+	addi $t2, $t1, 64
+	sw $t0, 2816($t2)
+	
+		addi $t2, $t1, 104
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 104
+	sw $t0, 2176($t2)
+	
+	addi $t2, $t1, 100
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 100
+	sw $t0, 2432($t2)
+	
+	addi $t2, $t1, 96
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 96
+	sw $t0, 2688($t2)
+
+	addi $t2, $t1, 92
+	sw $t0, 2816($t2)
+	addi $t2, $t1, 92
+	sw $t0, 2944($t2)
+	
+	addi $t2, $t1, 88
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 88
+	sw $t0, 3200($t2)
+	
+	addi $t2, $t1, 84
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 84
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 80
+	sw $t0, 3584($t2)
+	
+	addi $t2, $t1, 76
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 72
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 72
+	sw $t0, 3200($t2)
+	
+	addi $t2, $t1, 68
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 68
+	sw $t0, 2944($t2)
+	j w_sound
+
+ 	
+
+check_time:
+	li $v0, 30
+	syscall
+	move $s1 ,$a0
+	sub $s2, $s1, $s0
+
+	bge $s2, $s3, no_lives
+	
+	j after_time_check
+	
+check_ball_position:
+	la $t7, BALL
+	lw $t7, 4($t7)
+	li $t5, 4096
+	la $t6, ADDR_DSPL
+	lw $t6, 0($t6)
+	add $t5, $t5, $t6
+	bge $t7, $t5, check_lives	# if ball position off screen ==> quit
+
+	j after_ball_check
+
+
+
+check_lives:
+ 	addi $t8, $t8, -1
+ 	sle $t7, $t8, 0
+ 	beq $t7, 1, no_lives
+ 	
+ 	li $t7, 0x10008EC0
+ 	la $t6, BALL
+ 	sw $t7, 4($t6)
+ 	
+ 	
+ 	la $t1, PADDLE
+ 	lw $a2, 0($t1) # Paddle size
+ 	lw $a0, 8($t1) # Paddle position
+ 	la $a1, MY_COLOURS	
+ 	lw $a1, 24($a1)		# LOAD BLACK
+ 	jal draw_row
+ 	li $t7, 0x10008FB4
+ 	sw $t7, 8($t1)
+	lw $a0, 8($t1) # Paddle position
+	lw $a1, 4($t1) # Paddle colour
+	lw $a2, 0($t1) # Paddle size
+	jal draw_row
+	
+	
+	la $t1, PADDLE2
+ 	lw $a2, 0($t1) # Paddle size
+ 	lw $a0, 8($t1) # Paddle position
+ 	la $a1, MY_COLOURS	
+ 	lw $a1, 24($a1)		# LOAD BLACK
+ 	jal draw_row
+ 	li $t7, 0x10008F34
+ 	sw $t7, 8($t1)
+	lw $a0, 8($t1) # Paddle position
+	lw $a1, 4($t1) # Paddle colour
+	lw $a2, 0($t1) # Paddle size
+	jal draw_row
+	
+	
+	
+ 	
+ 	la $t1, BALL
+	lw $a2, 0($t1)
+	lw $a1, 4($t1)
+	sw $a2, 0($a1)
+ 	
+ 	j randomize_direction
+ 
+no_lives:
+	li $v0, 33
+	li $a0, 50
+	li $a1, 1000
+	li $a2, 126
+	li $a3, 127
+	syscall
+	
+	li $t0 0xFFFFFF
+	la $t1, ADDR_DSPL
+	lw $t1, 0($t1)
+	
+
+	# G
+	addi $t2, $t1, 20
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 24
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 28
+	sw $t0, 2048($t2)
+
+	addi $t2, $t1, 16
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 16
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 16
+	sw $t0, 2432($t2)
+	
+	addi $t2, $t1, 20
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 24
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 28
+	sw $t0, 2560($t2)
+
+	addi $t2, $t1, 32
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 32
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 28
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 24
+	sw $t0, 2304($t2)
+
+
+	# A
+	addi $t2, $t1, 48
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 52
+	sw $t0, 2048($t2)
+	
+	addi $t2, $t1, 44
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 44
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 44
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 44
+	sw $t0, 2560($t2)
+
+	addi $t2, $t1, 48
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 52
+	sw $t0, 2304($t2)
+
+	addi $t2, $t1, 56
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 56
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 56
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 56
+	sw $t0, 2560($t2)
+
+	# M
+	addi $t2, $t1, 68
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 68
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 68
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 68
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 68
+	sw $t0, 2560($t2)
+
+	addi $t2, $t1, 84
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 84
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 84
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 84
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 84
+	sw $t0, 2560($t2)
+	
+	addi $t2, $t1, 72
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 76
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 80
+	sw $t0, 2176($t2)
+
+	# E
+	addi $t2, $t1, 96
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 96
+	sw $t0, 2176($t2)
+	addi $t2, $t1, 96
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 96
+	sw $t0, 2432($t2)
+	addi $t2, $t1, 96
+	sw $t0, 2560($t2)
+
+	addi $t2, $t1, 100
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 104
+	sw $t0, 2048($t2)
+	addi $t2, $t1, 108
+	sw $t0, 2048($t2)
+	
+	addi $t2, $t1, 100
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 104
+	sw $t0, 2304($t2)
+	addi $t2, $t1, 108
+	sw $t0, 2304($t2)
+
+	addi $t2, $t1, 100
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 104
+	sw $t0, 2560($t2)
+	addi $t2, $t1, 108
+	sw $t0, 2560($t2)
+
+	# O
+	addi $t2, $t1, 20
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 24
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 28
+	sw $t0, 2944($t2)
+
+	addi $t2, $t1, 20
+	sw $t0, 3456($t2)
+	addi $t2, $t1, 24
+	sw $t0, 3456($t2)
+	addi $t2, $t1, 28
+	sw $t0, 3456($t2)
+
+	addi $t2, $t1, 16
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 16
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 16
+	sw $t0, 3328($t2)
+	
+	addi $t2, $t1, 32
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 32
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 32
+	sw $t0, 3328($t2)
+
+
+	# V
+	addi $t2, $t1, 44
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 44
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 44
+	sw $t0, 3200($t2)
+
+	addi $t2, $t1, 60
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 60
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 60
+	sw $t0, 3200($t2)
+
+	addi $t2, $t1, 48
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 52
+	sw $t0, 3456($t2)
+	addi $t2, $t1, 56
+	sw $t0, 3328($t2)
+
+	# E
+	addi $t2, $t1, 72
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 72
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 72
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 72
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 72
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 76
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 80
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 84
+	sw $t0, 2944($t2)
+	
+	addi $t2, $t1, 76
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 80
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 84
+	sw $t0, 3200($t2)
+
+	addi $t2, $t1, 76
+	sw $t0, 3456($t2)
+	addi $t2, $t1, 80
+	sw $t0, 3456($t2)
+	addi $t2, $t1, 84
+	sw $t0, 3456($t2)
+
+
+	# R
+	addi $t2, $t1, 96
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 96
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 96
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 96
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 96
+	sw $t0, 3456($t2)
+	
+	addi $t2, $t1, 100
+	sw $t0, 2944($t2)
+	addi $t2, $t1, 104
+	sw $t0, 2944($t2)
+
+	addi $t2, $t1, 100
+	sw $t0, 3200($t2)
+	addi $t2, $t1, 104
+	sw $t0, 3200($t2)
+
+	addi $t2, $t1, 108
+	sw $t0, 3072($t2)
+	addi $t2, $t1, 104
+	sw $t0, 3328($t2)
+	addi $t2, $t1, 108
+	sw $t0, 3456($t2)
+	
+	j l_sound
+
+	
+	
+	
+	after_no_lives:
+	lw $t0, ADDR_KBRD
+	lw $a3, 0($t0)
+	beq $a3, 1, lose_keyboard_input
+	
+
+
+	
+	j after_no_lives
+ 	
+
+check_collision:
+	# branch accordingly depending on the direction of the ball
+	beq $t9, 1, moving_tr
+	beq $t9, 2, moving_tl
+	beq $t9, 3, moving_dr
+	beq $t9, 4, moving_dl
+
+	j after_collision
+
+moving_tr:
+	# check if can move top right. Yes: draw, No: change dir draw
+	la $a0, BALL
+	lw $a0, 4($a0) # position of ball
+
+	addi $a1, $a0, -124
+
+	lw $a2, 0($a1)
+	bnez $a2 check_colour_collision # check if pixel is not on black
+	b check_brick_collision
+
+moving_tl:
+	# check if can move top left. Yes: draw, No: change dir draw
+	la $a0, BALL
+	lw $a0, 4($a0) # position of ball
+	addi $a1, $a0, -132
+	lw $a2, 0($a1)
+
+	bnez $a2, check_colour_collision # check if pixel is not on black
+	b check_brick_collision
+
+
+moving_dr:
+	# check if can move down right. Yes: draw, No: change dir draw
+	la $a0, BALL
+	lw $a0, 4($a0) # position of ball
+
+	addi $a1, $a0, 132
+	lw $a2, 0($a1)
+	bnez $a2, check_colour_collision # check if pixel is not on black
+	b check_brick_collision
+	
+
+moving_dl:
+	# check if can move down left. Yes: draw, No: change dir draw
+	la $a0, BALL
+	lw $a0, 4($a0) # position of ball
+	addi $a1, $a0, 124
+	lw $a2, 0($a1)
+	bnez $a2, check_colour_collision # check if pixel is not on black
+	li $t7, 8
+	j check_colour_sound
+	after_brick_collision_sound:
+	b check_brick_collision
+
+
+
+check_colour_collision: # if the projected position of ball is not empty space
+	li $t7, 1
+	j check_colour_sound
+	after_colour_sound:
+	la $t2, MY_COLOURS
+	la $t1, PADDLE
+	lw $t1, 4($t1) # paddle colour
+	lw $t3, 20($t2)
+	lw $t2, 28($t2)
+	beq $a2, $t3, wall_bounce # if colour of where ball wants to go is grey 
+	beq $a2, $t2, ceiling_bounce # if colour of where ball wants to go is blue-grey
+	beq $a2, $t1, after_corner_ceiling_cases # if colour of where ball wants to go is purple
+
+	b is_corner
+is_corner:
+	# check if iso or brick brick if neither then go to check brick_collision
+	
+	# moving up and blank spaces above ball and below projected ball
+	lw $a2, -128($a0)
+	lw $a3, 128($a1)
+	add $a2, $a2, $a3
+	div $t0, $t9, 3
+	mflo $t0
+	add $a2, $a2, $t0
+	beqz $a2, iso_up
+	
+	# moving down and blank spaces below ball and above projected ball
+	lw $a2, 128($a0)
+	lw $a3, -128($a1)
+	add $a2, $a2, $a3
+	sll $a2, $a2, 1
+	div $t0, $t9, 3
+	mflo $t0
+	add $a2, $a2, $t0
+	beq $a2, 1, iso_down
+	
+	# moving up and if above ball is brick and below projection is brick
+	la $t3, MY_COLOURS
+	lw $t3, 24($t3)
+	lw $a2, 128($a0)
+	lw $a3, -128($a1)
+	sgt $t1, $a2, $t3
+	sgt $t2, $a3, $t3
+	add $t1, $t1, $t2
+	beq $t1, 2, double_brick_corner
+	
+	# moving down and if below ball is brick and above projection is brick
+	la $t3, MY_COLOURS
+	lw $t3, 24($t3)
+	lw $a2, -128($a0)
+	lw $a3, 128($a1)
+	sgt $t1, $a2, $t3
+	sgt $t2, $a3, $t3
+	add $t1, $t1, $t2
+	beq $t1, 2, double_brick_corner
+	
+	
+	# check brick bounce
+	# check moving up and if there is a brick under projection
+	lw $a3, 128($a1)
+	sgt $a3, $a3, 0
+	div $t0, $t9, 3
+	mflo $t0
+	sub $a3, $a3, $t0	
+	beq $a3, 1, brick_wall_bounce
+	
+	# check moving down and if there is a brick above projection
+	lw $a3, -128($a1)
+	sgt $a3, $a3, 0
+	div $t0, $t9, 3
+	mflo $t0
+	add $a3, $a3, $t0
+	beq $a3, 2, brick_wall_bounce
+	
+	div $t0, $t9, 3
+	mflo $t0
+	beqz $t0, brick_collision # if its not a corner and moving up treat as regular collision
+	beq $t0, 1, brick_collision_down # if its not a corner and moving down treat as downward collision
+	
+brick_wall_bounce:
+	la $t3, PADDLE
+	lw $t3, 4($t3)
+	beq $a2, $t3, after_brick_wall_break
+	beq $t9, 1, brick_wall_bounce_r
+	beq $t9, 3, brick_wall_bounce_r
+	beq $t9, 2, brick_wall_bounce_l
+	beq $t9, 4, brick_wall_bounce_l
+	after_brick_wall_break:
+		li $t7, 2
+		j check_colour_sound
+		after_wall_bounce_sound:
+		beq $t9, 1, wall_tr
+		beq $t9, 2, wall_tl
+		beq $t9, 3, wall_dr
+		beq $t9, 4, wall_dl
+	
+	brick_wall_bounce_r:
+		la $t3, MY_COLOURS
+		lw $t3, 24($t3)
+		# destroy brick right
+		sw $t3, 4($a0)
+		sw $t3, 8($a0)
+		sw $t3, 12($a0)
+		sw $t3, 16($a0)
+		j after_brick_wall_break
+	brick_wall_bounce_l:
+		la $t3, MY_COLOURS
+		lw $t3, 24($t3)
+		# destroy brick right
+		sw $t3, -4($a0)
+		sw $t3, -8($a0)
+		sw $t3, -12($a0)
+		sw $t3, -16($a0)
+		j after_brick_wall_break
+double_brick_corner:
+	# projected location is not a wall, ceiling, or paddle
+	
+	# check if unbreakable corner
+	la $t3, MY_COLOURS
+	lw $t3, 32($t3)
+	seq $t1, $a2, $t3
+	seq $t2, $a3, $t3
+	add $t1, $t1, $t2
+	beq $t1, 2, after_brick_corner_break
+	
+	# check if it is a corner of bricks
+	beq $t9, 1, double_brick_r
+	beq $t9, 2, double_brick_l
+	beq $t9, 3, double_brick_r
+	beq $t9, 4, double_brick_l
+	after_brick_corner_break:
+	li $t7, 3
+	j check_colour_sound
+	after_brick_corner_sound:
+	beq $t9, 1, corner_tr
+	beq $t9, 2, corner_tl
+	beq $t9, 3, corner_br
+	beq $t9, 4, corner_bl
+
+	double_brick_r:
+		la $t3, MY_COLOURS
+		lw $t3, 24($t3)
+		# destroy brick on top
+		sw $t3, -4($a1)
+		sw $t3, -8($a1)
+		sw $t3, -12($a1)
+		sw $t3, -16($a1)
+		
+		# destroy brick on bottom
+		sw $t3, 4($a0)
+		sw $t3, 8($a0)
+		sw $t3, 12($a0)
+		sw $t3, 16($a0)
+		j after_brick_corner_break
+		
+	double_brick_l:
+		la $t3, MY_COLOURS
+		lw $t3, 24($t3)
+		# destroy brick on top
+		sw $t3, 4($a1)
+		sw $t3, 8($a1)
+		sw $t3, 12($a1)
+		sw $t3, 16($a1)
+		
+		# destroy brick on bottom
+		sw $t3, -4($a0)
+		sw $t3, -8($a0)
+		sw $t3, -12($a0)
+		sw $t3, -16($a0)
+		j after_brick_corner_break
+iso_up:
+	# break brick
+	beq $t9, 1, iso_break_tr
+	beq $t9, 2, iso_break_tl
+	iso_up_broken:
+	li $t7, 4
+	j check_colour_sound
+	after_iso_up_sound:
+	
+	# change direction
+	beq $t9, 1, corner_tr
+	beq $t9, 2, corner_tl
+	
+	iso_break_tr:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0) # load black
+		sw $t0, 0($a1)
+		sw $t0, 4($a1)
+		sw $t0, 8($a1)
+		sw $t0, 12($a1)
+		j iso_up_broken
+	iso_break_tl:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0) # load black
+		sw $t0, 0($a1)
+		sw $t0, -4($a1)
+		sw $t0, -8($a1)
+		sw $t0, -12($a1)
+		j iso_up_broken
+	
+iso_down:
+	beq $t9, 3, iso_break_dr
+	beq $t9, 4, iso_break_dl
+	iso_down_broken:
+	li $t7, 5
+	j check_colour_sound
+	after_iso_down_sound:
+	
+	# change direction
+	beq $t9, 3, corner_br
+	beq $t9, 4, corner_bl
+	
+	iso_break_dr:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0) # load black
+		sw $t0, 0($a1)
+		sw $t0, 4($a1)
+		sw $t0, 8($a1)
+		sw $t0, 12($a1)
+		j iso_down_broken
+	iso_break_dl:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0) # load black
+		sw $t0, 0($a1)
+		sw $t0, -4($a1)
+		sw $t0, -8($a1)
+		sw $t0, -12($a1)
+		j iso_down_broken
+check_brick_collision:
+	la $t3, MY_COLOURS
+	lw $t3, 24($t3)
+	
+	# check moving down and brick below ball and under projection
+	lw $a2, 128($a0)
+	lw $a3, -128($a1)
+	sgt $t1, $a2, $t3
+	sgt $t2, $a3, $t3
+	add $t1, $t1, $t2
+	beq $t1, 2, double_brick_corner
+	
+	# check moving up and brick above ball and above projection
+	la $t3, MY_COLOURS
+	lw $t3, 24($t3)
+	lw $a2, -128($a0)
+	lw $a3, 128($a1)
+	sgt $t1, $a2, $t3
+	sgt $t2, $a3, $t3
+	add $t1, $t1, $t2
+	beq $t1, 2, double_brick_corner
+	
+	
+	# moving up and brick above ball
+	lw $a2, -128($a0)
+	sgt $a2, $a2, 0
+	div $t0, $t9, 3
+	mflo $t0
+	sub $a2, $a2, $t0
+	beq $a2, 1, brick_collision
+	
+	# moving down and paddle below ball
+	lw $a2, 128($a0)
+	la $t2, PADDLE
+	lw $t2, 4($t2)
+	seq $a2, $a2, $t2
+	div $t0, $t9, 3
+	mflo $t0
+	add $a2, $a2, $t0
+	beq $a2, 2, after_correction
+	# check brick bounce
+	lw $a2, 128($a0)
+	sgt $a2, $a2, 0
+	div $t0, $t9, 3
+	mflo $t0
+	add $a2, $a2, $t0
+	beq $a2, 2, collision_correction
+	
+	# brick on right of ball
+	# add case where ball collides with side of paddle.
+	lw $a2, 4($a0)
+	bnez $a2, brick_wall_bounce
+	# brick on left of ball
+	lw $a2, -4($a0)
+	bnez $a2, brick_wall_bounce
+	
+	j draw_ball # if no brick collision draw normally
+
+collision_correction:
+	beq $t9, 3, correct_dr
+	beq $t9, 4, correct_dl
+	after_correction:
+	li $t7, 6
+	j check_colour_sound
+	after_correction_sound:
+	beq $t9, 3, ceiling_dr
+	beq $t9, 4, ceiling_dl
+	correct_dr:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0)
+		sw $t0, -4($a1)
+		sw $t0, -8($a1)
+		sw $t0, -12($a1)
+		sw $t0, -16($a1)
+		j after_correction
+	correct_dl:
+		la $t0, MY_COLOURS
+		lw $t0, 24($t0)
+		sw $t0, 4($a1)
+		sw $t0, 8($a1)
+		sw $t0, 12($a1)
+		sw $t0, 16($a1)
+		j after_correction
+brick_collision:
+# Erase brick from top
+	la $t2, MY_COLOURS
+	lw $t2, 24($t2)
+
+	li $t5, 16
+	la $t4, ADDR_DSPL
+	lw $t4, 0($t4)
+	la $a2, BALL
+	lw $a2, 4($a2)
+	addi $a2, $a2, -128 # pixel above ball
+	sub $t4, $a2, $t4
+	subi $t4, $t4, 4
+	div $t4, $t5
+	mfhi $t5			# modulo 4 result
+	beq $t5, 0, brick_collision_1
+	beq $t5, 4, brick_collision_2
+	beq $t5, 8, brick_collision_3
+	beq $t5, 12, brick_collision_4
+		brick_collision_1: # last pixel of brick
+			sw $t2, -12($a2)
+			sw $t2, -8($a2)
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			j ceiling_bounce
+		brick_collision_2: # first pixel of brick
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			sw $t2, 8($a2)
+			sw $t2, 12($a2)
+			j ceiling_bounce
+		brick_collision_3: # second pixel of brick
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			sw $t2, 8($a2)
+			j ceiling_bounce
+		brick_collision_4: # second last pixel of brick
+			sw $t2, -8($a2)
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			j ceiling_bounce
+brick_collision_down:
+	# Erase brick
+	la $t2, MY_COLOURS
+	lw $t2, 24($t2)
+
+	li $t5, 16
+	la $t4, ADDR_DSPL
+	lw $t4, 0($t4)
+	la $a2, BALL
+	lw $a2, 4($a2)
+	addi $a2, $a2, 128 # pixel below ball
+	sub $t4, $a2, $t4
+	subi $t4, $t4, 4
+	div $t4, $t5
+	mfhi $t5			# modulo 4 result
+	beq $t5, 0, brick_collision_1_d
+	beq $t5, 4, brick_collision_2_d
+	beq $t5, 8, brick_collision_3_d
+	beq $t5, 12, brick_collision_4_d
+		brick_collision_1_d: # last pixel of brick
+			sw $t2, -12($a2)
+			sw $t2, -8($a2)
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			j ceiling_bounce_down
+		brick_collision_2_d: # first pixel of brick
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			sw $t2, 8($a2)
+			sw $t2, 12($a2)
+			j ceiling_bounce_down
+		brick_collision_3_d: # second pixel of brick
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			sw $t2, 8($a2)
+			j ceiling_bounce_down
+		brick_collision_4_d: # second last pixel of brick
+			sw $t2, -8($a2)
+			sw $t2, -4($a2)
+			sw $t2, 0($a2)
+			sw $t2, 4($a2)
+			j ceiling_bounce_down
+ceiling_bounce_down:
+	beq $t9, 3, ceiling_dr
+	beq $t9, 4, ceiling_dl
+	
+ceiling_bounce:
+	la $t2, MY_COLOURS
+	lw $t2, 20($t2)
+	addi $a3, $a1, 128
+	lw $a3, 0($a3) # colour of pixel under a1
+	
+	beq $a3, $t2, corner_top
+	
+	# Check iso corner 
+	# moving up and blank spaces above ball and below projected ball
+	lw $t3, 0($a1)
+	sgt $t3, $t3, 0
+	lw $a2, -128($a0)
+	lw $a3, 128($a1)
+	add $a2, $a2, $a3
+	div $t0, $t9, 3
+	mflo $t0
+	add $a2, $a2, $t0
+	sll $a2, $a2, 1
+	sub $a2, $a2, $t3
+	beq $a2, 1, iso_up_broken # skips breaking brick section
+	
+	# moving down and blank spaces below ball and above projected ball
+	lw $a2, 128($a0)
+	lw $a3, -128($a1)
+	add $a2, $a2, $a3
+	div $t0, $t9, 3
+	mflo $t0
+	add $t0, $t3, $t0
+	sub $a2, $a2, $t0
+	beq $a2, -2, iso_down_broken # skips breaking brick section
+	# check brick bounce
+	# check moving up and if there is a brick under projection
+	lw $a3, 128($a1)
+	sgt $a3, $a3, 0
+	div $t0, $t9, 3
+	mflo $t0
+	sub $a3, $a3, $t0	
+	beq $a3, 1, after_brick_wall_break
+	
+	# check moving down and if there is a brick above projection
+	lw $a3, -128($a1)
+	sgt $a3, $a3, 0
+	div $t0, $t9, 3
+	mflo $t0
+	add $a3, $a3, $t0
+	beq $a3, 2, after_brick_wall_break
+	
+	after_corner_ceiling_cases:
+	
+	beq $t9, 1, ceiling_tr
+	beq $t9, 2, ceiling_tl
+	beq $t9, 3, ceiling_dr
+	beq $t9, 4, ceiling_dl
+corner_top:
+	beq $t9, 1, corner_tr
+	beq $t9, 2, corner_tl
+	
+	corner_tr:
+		# TR -> DL
+		li $t9, 4
+		addi $a1, $a0, 124
+		j draw_ball
+	
+	corner_tl:
+		# TL -> DR
+		li $t9, 3
+		addi $a1, $a0, 132
+		j draw_ball
+	
+wall_bounce:
+	la $t2, PADDLE
+	lw $t2, 4($t2)
+	addi $a3, $a0, 128
+	lw $a3, 0($a3) # colour of pixel under a1
+
+	beq $a3, $t2, corner_bottom
+	bnez $a3, corner_wall_brick # bounce on top of brick
+	# check wall corner (a1 = wall) and brick directly above ball (Inside wall bounce)  ONLY ACCOUNTING HITTING FROM BOTTOM
+	# change a3 to check above ball
+	addi $a3, $a0, -128
+	lw $a3, 0($a3) # colour of pixel under a1
+	bnez $a3, corner_wall_brick # bouncing from below brick
+	
+	beq $t9, 1, wall_tr
+	beq $t9, 2, wall_tl
+	beq $t9, 3, wall_dr
+	beq $t9, 4, wall_dl
+
+corner_wall_brick:
+	beq $t9, 1, break_last_pixel
+	beq $t9, 2, break_first_pixel
+	beq $t9, 3, break_last_pixel
+	beq $t9, 4, break_first_pixel
+	corner_wall_broken:
+		li $t7, 7
+		j check_colour_sound
+		after_wall_brick_sound:
+		beq $t9, 1, corner_tr
+		beq $t9, 2, corner_tl
+		beq $t9, 3, corner_br
+		beq $t9, 4, corner_bl
+break_first_pixel:
+	la $t0, MY_COLOURS
+	lw $t0, 24($t0) # load black
+	sw $t0, 4($a1)
+	sw $t0, 8($a1)
+	sw $t0, 12($a1)
+	sw $t0, 16($a1)
+	j corner_wall_broken
+	
+break_last_pixel:
+	la $t0, MY_COLOURS
+	lw $t0, 24($t0) # load black
+	sw $t0, -4($a1)
+	sw $t0, -8($a1)
+	sw $t0, -12($a1)
+	sw $t0, -16($a1)
+	j corner_wall_broken
+
+corner_bottom:
+	beq $t9, 3, corner_br
+	beq $t9, 4, corner_bl
+	
+	corner_br:
+		# BR -> TL
+		li $t9, 2
+		addi $a1, $a0, -132
+		j draw_ball
+	
+	corner_bl:
+		# BL -> TR
+		li $t9, 1
+		addi $a1, $a0, -124
+		j draw_ball
+	
+ceiling_tr:
+	# TR -> DR
+	li $t9, 3
+	addi $a1, $a0, 132
+	j draw_ball
+ceiling_tl:
+	# TL -> DL
+	li $t9, 4
+	addi $a1, $a0, 124
+	j draw_ball
+ceiling_dr:
+	# DR -> TR
+	li $t9, 1
+	addi $a1, $a0, -124
+	j draw_ball
+ceiling_dl:
+	# DL -> TL
+	li $t9, 2
+	addi $a1, $a0, -132
+	j draw_ball
+
+wall_tr:
+	# TR -> TL
+	li $t9, 2
+	addi $a1, $a0, -132
+	j draw_ball
+
+wall_tl:
+	# TL -> TR
+	li $t9, 1
+	addi $a1, $a0, -124
+	j draw_ball
+wall_dr:
+	# DR -> DL
+	li $t9, 4
+	addi $a1, $a0, 124
+	j draw_ball
+wall_dl:
+	# DL -> DR
+	li $t9, 3
+	addi $a1, $a0, 132
+	j draw_ball
+
+
+draw_ball: # a1 location to draw a0 location to erase
+	la $t2, BALL
+	lw $t1, 0($t2)
+	la $t0, MY_COLOURS
+	lw $t0, 24($t0)
+
+	sw $t0 0($a0) # draw black
+	sw $t1, 0($a1) # draw new pos white
+	sw $a1, 4($t2) # save pos to memory
+
+	jal my_delay
+	nop
+
+	j after_collision
+
+
+my_delay: 	
+	li $t1, 0
+	lw $s2, DELAY
+loop_delay:	beq $t1, $s2, end_delay
+		nop
+		addi $t1, $t1, 1
+		j loop_delay
+		nop
+end_delay: 	jr $ra
+		nop
+
+draw_row:
+	sw $a1, 0($a0)
+	addi $a0, $a0, 4
+	addi $a2, $a2, -1
+	bnez $a2, draw_row
+	jr $ra
+
+
+draw_wall:
+	li $a2, 32 # 32 units per column
+	draw_column:
+		sw $a1, 0($a0)
+		addi $a0, $a0, 128 # next row
+		addi $a2, $a2, -1
+		bnez $a2, draw_column
+	addi $a0, $a0, -4096 # return to top pixel in column of bitmap display
+	addi $a0, $a0, 4
+	addi $a3, $a3, -1 # decrement loop condition
+	bnez $a3, draw_wall # t3 represents wall width
+	jr $ra
+
+pre_keyboard_input:
+	lw $a3, 4($t0)                  # Load second word from keyboard
+	beq $a3, 'a', pre_respond_to_a     # Check if the key a was pressed
+	beq $a3, 'd', pre_respond_to_d     # Check if the key d was pressed
+	beq $a3, 'j', pre_respond_to_j     # Check if the key j was pressed
+	beq $a3, 'l', pre_respond_to_l     # Check if the key l was pressed
+	beq $a3, 0x20, respond_to_space # Check if the spacebar was pressed
+	beq $a3, 'q', quit
+	j pre_game
+	
+pre_respond_to_a:
+	jal pre_check_valid_left
+	la $t0, PADDLE
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	sw $a1, 0($a0) # erase right most pixel
+
+	lw $a0, 8($t0) # left pixel
+	addi $a0, $a0, -4  # one pixel left of paddle
+	sw $a0, 8($t0) # store new left pixel
+	lw $a1,4($t0) # colour of paddle
+	sw $a1, 0($a0) # draw pixel left of paddle
+
+	j pre_game
+	# check if going off screen
+	# if not draw left
+	
+pre_respond_to_d:
+	jal pre_check_valid_right
+	la $t0, PADDLE
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	sw $a1, 0($a0) # erase left most pixel
+	addi $a0, $a0, 4
+	sw $a0, 8($t0) # store new left pixel
+
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	lw $a1, 4($t0) # colour of paddle
+	sw $a1, 0($a0)
+
+	j pre_game
+	# check if going off screen
+	# if not draw left
+
+pre_respond_to_j:
+	jal pre_check_valid_left_2
+	la $t0, PADDLE2
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	sw $a1, 0($a0) # erase right most pixel
+	
+	la $t1, BALL
+	lw $a0, 4($t1)		# position of ball
+	sw $a1, 0($a0)		# erase previous ball position
+	lw $t2, 0($t1)		# load white colour of ball
+	addi $a0, $a0, -4 	# go left
+	sw $t2, 0($a0)		# paint white colour
+	sw $a0, 4($t1)		# save position to memory
+	
+	lw $a0, 8($t0) # left pixel
+	addi $a0, $a0, -4  # one pixel left of paddle
+	sw $a0, 8($t0) # store new left pixel
+	lw $a1,4($t0) # colour of paddle
+	sw $a1, 0($a0) # draw pixel left of paddle
+	j pre_game
+	# check if going off screen
+	# if not draw left
+
+
+pre_respond_to_l:
+	jal pre_check_valid_right_2
+	la $t0, PADDLE2
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	sw $a1, 0($a0) # erase left most pixel
+	addi $a0, $a0, 4
+	sw $a0, 8($t0) # store new left pixel
+	
+	la $t1, BALL
+	lw $t2, 4($t1)		# position of ball
+	sw $a1, 0($t2)		# erase previous ball position
+	lw $t3, 0($t1)		# load white colour of ball
+	addi $t2, $t2, 4 	# go right
+	sw $t3, 0($t2)		# paint white colour
+	sw $t2, 4($t1)		# save position to memory
+	
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	lw $a1, 4($t0) # colour of paddle
+	sw $a1, 0($a0)
+	j pre_game
+	# check if going off screen
+	# if not draw left
+
+
+lose_keyboard_input:
+	lw $a3, 4($t0)                  # Load second word from keyboard
+	beq $a3, 'r', respond_to_r     # Check if the key r was pressed
+	beq $a3, 'q', quit
+	j after_no_lives
+
+respond_to_r:
+	li $t7, 0x10008EC0
+	la $t6, BALL
+	sw $t7, 4($t6)
+	li $t7, 0x10008FB4
+	la $t1, PADDLE
+	lw $a0, 8($t1) # Paddle position
+	la $a1, MY_COLOURS	
+	lw $a1, 24($a1)		# LOAD BLACK
+	lw $a2, 0($t1)
+	jal draw_row
+	sw $t7, 8($t1)
+	
+	li $t7, 0x10008F34
+	la $t1, PADDLE2
+	lw $a0, 8($t1) # Paddle position
+	la $a1, MY_COLOURS	
+	lw $a1, 24($a1)		# LOAD BLACK
+	lw $a2, 0($t1)
+	jal draw_row
+	sw $t7, 8($t1)
+	
+	
+	la $a0, ADDR_DSPL
+	lw $a0, 0($a0)
+	li $a2, 4096
+	jal draw_row
+	
+	
+
+	j main
+
+keyboard_input:
+	lw $a3, 4($t0)                  # Load second word from keyboard
+	beq $a3, 'a', respond_to_a     # Check if the key a was pressed
+	beq $a3, 'd', respond_to_d     # Check if the key d was pressed
+	beq $a3, 'j', respond_to_j     # Check if the key j was pressed
+	beq $a3, 'l', respond_to_l     # Check if the key l was pressed
+	beq $a3, 'p', respond_to_p     # Check if the key p was pressed
+	beq $a3, 'q', quit
+	j before_collision
+
+
+respond_to_a:
+	jal check_valid_left
+	la $t0, PADDLE
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	sw $a1, 0($a0) # erase right most pixel
+	lw $a0, 8($t0) # left pixel
+	addi $a0, $a0, -4  # one pixel left of paddle
+	sw $a0, 8($t0) # store new left pixel
+	lw $a1,4($t0) # colour of paddle
+	sw $a1, 0($a0) # draw pixel left of paddle
+	j before_collision
+	# check if going off screen
+	# if not draw left
+
+respond_to_d:
+	jal check_valid_right
+	la $t0, PADDLE
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	sw $a1, 0($a0) # erase left most pixel
+	addi $a0, $a0, 4
+	sw $a0, 8($t0) # store new left pixel
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	lw $a1, 4($t0) # colour of paddle
+	sw $a1, 0($a0)
+	j before_collision
+	# check if going off screen
+	# if not draw left
+	
+respond_to_j:
+	jal check_valid_left_2
+	la $t0, PADDLE2
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	sw $a1, 0($a0) # erase right most pixel
+	lw $a0, 8($t0) # left pixel
+	addi $a0, $a0, -4  # one pixel left of paddle
+	sw $a0, 8($t0) # store new left pixel
+	lw $a1,4($t0) # colour of paddle
+	sw $a1, 0($a0) # draw pixel left of paddle
+	j before_collision
+	# check if going off screen
+	# if not draw left
+	
+	
+respond_to_l:
+	jal check_valid_right_2
+	la $t0, PADDLE2
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0) # size
+	la $t1, MY_COLOURS
+	lw $a1, 24($t1) # colour black
+	sw $a1, 0($a0) # erase left most pixel
+	addi $a0, $a0, 4
+	sw $a0, 8($t0) # store new left pixel
+	addi $a2, $a2, -1
+    	sll $a2, $a2, 2
+	add $a0, $a0, $a2
+	lw $a1, 4($t0) # colour of paddle
+	sw $a1, 0($a0)
+	j before_collision
+	# check if going off screen
+	# if not draw left	
+	
+
+respond_to_p:
+	lw $a3, 0($t0)
+	beq $a3, 1, resume_game
+	j respond_to_p
+
+resume_game:
+	lw $a3, 4($t0)
+	beq $a3, 'p', game_loop
+	j respond_to_p
+
+respond_to_space:
+	j game_loop
+
+pre_check_valid_right:
+	la $t0, PADDLE
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1) # load grey
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0)
+	sll $a2, $a2, 2
+	add $a0, $a0, $a2 # get pixel right of paddle
+	lw $a0, 0($a0)
+	beq $a0, $a1, pre_game
+	jr $ra
+
+pre_check_valid_left:
+	la $t0, PADDLE
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1)
+	lw $a0, 8($t0)
+	addi $a0, $a0, -4
+	lw $a0, 0($a0)
+	beq $a0, $a1, pre_game
+	jr $ra
+	
+pre_check_valid_right_2:
+	la $t0, PADDLE2
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1) # load grey
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0)
+	sll $a2, $a2, 2
+	add $a0, $a0, $a2 # get pixel right of paddle
+	lw $a0, 0($a0)
+	beq $a0, $a1, pre_game
+	jr $ra
+
+pre_check_valid_left_2:
+	la $t0, PADDLE2
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1)
+	lw $a0, 8($t0)
+	addi $a0, $a0, -4
+	lw $a0, 0($a0)
+	beq $a0, $a1, pre_game
+	jr $ra
+
+check_valid_right:
+	la $t0, PADDLE
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1) # load grey
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0)
+	sll $a2, $a2, 2
+	add $a0, $a0, $a2 # get pixel right of paddle
+	lw $a0, 0($a0)
+	beq $a0, $a1, game_loop
+	jr $ra
+
+check_valid_left:
+	la $t0, PADDLE
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1)
+	lw $a0, 8($t0)
+	addi $a0, $a0, -4
+	lw $a0, 0($a0)
+	beq $a0, $a1, game_loop
+	jr $ra
+	
+check_valid_right_2:
+	la $t0, PADDLE2
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1) # load grey
+	lw $a0, 8($t0) # left pixel
+	lw $a2, 0($t0)
+	sll $a2, $a2, 2
+	add $a0, $a0, $a2 # get pixel right of paddle
+	lw $a0, 0($a0)
+	beq $a0, $a1, game_loop
+	jr $ra
+
+check_valid_left_2:
+	la $t0, PADDLE2
+	la $t1, MY_COLOURS
+	lw $a1, 20($t1)
+	lw $a0, 8($t0)
+	addi $a0, $a0, -4
+	lw $a0, 0($a0)
+	beq $a0, $a1, game_loop
+	jr $ra
+
+quit:
+	li $v0, 10 # terminate the program gracefully
+	syscall
+
+
+
+
+
+
+
+
+
+
+
+initialize_screen:
+
+la $t1, MY_COLOURS
+lw, $a1, 28($t1)
+# Draws left columns
+lw, $a1, 20($t1)
+la $t0, ADDR_DSPL
+lw $a0, 0($t0)
+la $t3, WALL
+lw, $a3, 0($t3)
+beqz $a3, draw_bricks
+jal draw_wall
+
+# Draws right columns
+la $t0, ADDR_DSPL
+lw $a0, 0($t0)
+addi $a0, $a0, 120
+la $t3, WALL
+lw, $a3, 0($t3)
+beqz $a3, draw_bricks
+jal draw_wall
+
+# Draws top border
+la $t0, ADDR_DSPL
+lw $a0, 0($t0)
+lw, $a1, 28($t1)
+li, $a2, 128
+jal draw_row
+
+la $t0, BRICK
+lw $a0, 0($t0)
+li $t4, 5 # number of rows
+la $t1, MY_COLOURS
+draw_bricks:
+lw, $a1, 0($t1) # load colour
+li, $a2, 28 # units per row
+jal draw_row
+addi $t1, $t1, 4 # move to next colour in memory
+addi $a0, $a0, 16 # move to next row
+addi $t4, $t4, -1 # decrement number of rows
+bnez $t4, draw_bricks # check if all rows have been drawn
+
+
+# Draws paddle in initial position
+la $t1, PADDLE
+lw $a2, 0($t1) # Paddle size
+lw $a0, 8($t1) # Paddle position
+lw $a1, 4($t1) # Paddle colour
+jal draw_row
+
+la $t1, PADDLE2
+lw $a2, 0($t1) # Paddle size
+lw $a0, 8($t1) # Paddle position
+lw $a1, 4($t1) # Paddle colour
+jal draw_row
+
+# Draw ball
+la $t1, BALL
+lw $a2, 0($t1)
+lw $a1, 4($t1)
+sw $a2, 0($a1)
+
+
+la $t8, LIVES
+lw $t8, 0($t8)
+
+randomize_direction:
+
+# Randomize ball direction TR or TL
+li $a1, 2  # a1 is upper bound
+li $v0, 42  # call random number to be generated
+syscall
+add $a0, $a0, 1  # a0 is lower bound
+
+
+
+move $t9, $a0
+
+
+
+j pre_game 
